@@ -1,0 +1,15 @@
+**/bin/
+**/obj/
+**/.vs/
+output/
+web_jobs/
+**/web_jobs/
+tools/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.env
+.git/
+*.md
+!README.md

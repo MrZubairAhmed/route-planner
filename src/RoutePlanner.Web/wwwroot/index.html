@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Route Planner</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f0f2f5; margin: 0; padding: 24px; }
+    .container { max-width: 720px; margin: 0 auto; }
+    .card { background: #fff; border-radius: 12px; padding: 28px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
+    h1 { margin: 0 0 6px; }
+    .subtitle { color: #666; margin-bottom: 20px; line-height: 1.5; }
+    label { display: block; font-weight: 600; margin: 14px 0 6px; font-size: 0.9rem; }
+    input, select, textarea { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 8px; }
+    .dropzone { border: 2px dashed #4285F4; border-radius: 10px; padding: 36px; text-align: center; background: #f8fbff; cursor: pointer; }
+    .dropzone input { display: none; }
+    .preview { background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 8px; padding: 14px; margin-top: 16px; display: none; }
+    .preview.visible { display: block; }
+    .preview.error { background: #fce8e6; border-color: #f5c6cb; color: #c5221f; }
+    .btn { margin-top: 16px; padding: 14px 24px; background: #4285F4; color: #fff; border: none; border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; width: 100%; }
+    .btn:disabled { background: #aaa; }
+    .btn-link { display: inline-block; padding: 8px 16px; background: #fff; color: #4285F4; border: 1px solid #4285F4; border-radius: 8px; text-decoration: none; font-size: 0.85rem; margin-bottom: 16px; }
+    .format-box { background: #f8f9fa; border-radius: 8px; padding: 14px; margin-bottom: 16px; font-size: 0.85rem; color: #555; line-height: 1.6; }
+    code { background: #e8eaed; padding: 2px 6px; border-radius: 4px; }
+    .hidden-ui { display: none !important; }
+    details summary { cursor: pointer; color: #4285F4; font-weight: 600; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>Route Planner</h1>
+      <p class="subtitle">Upload any Excel file with location coordinates — routes are generated automatically from your data.</p>
+      <div class="format-box hidden-ui">
+        <strong>Required:</strong> <code>Latitude</code>, <code>Longitude</code><br>
+        <strong>Recommended:</strong> <code>Start LAT</code>, <code>Start LNG</code>, <code>Name</code><br>
+        <strong>Optional:</strong> <code>District</code>, <code>Tehsil</code>, <code>SchoolCode</code>
+      </div>
+      <a class="btn-link" href="/api/template">Download blank template</a>
+      <form action="/plan" method="post" enctype="multipart/form-data" id="planForm">
+        <input type="hidden" name="job_id" id="jobId">
+        <div class="dropzone" id="dropzone">
+          <input type="file" id="fileInput" name="file" accept=".xlsx,.xls">
+          <p><strong>Drop Excel file here</strong> or click to browse</p>
+          <p id="fileName" style="color:#888;font-size:0.85rem">No file selected</p>
+        </div>
+        <div class="preview" id="preview"></div>
+        <button type="submit" class="btn" id="submitBtn" disabled>Generate Routes</button>
+        <details class="hidden-ui">
+          <summary>Advanced options</summary>
+          <label>Start Latitude</label><input name="start_lat" id="startLat" placeholder="Auto from Excel">
+          <label>Start Longitude</label><input name="start_lng" id="startLng" placeholder="Auto from Excel">
+          <label>Batch mode</label>
+          <select name="batch_by">
+            <option value="auto" selected>Auto (detect from file)</option>
+            <option value="none">Single route</option>
+            <option value="district">By District</option>
+            <option value="tehsil">By Tehsil</option>
+          </select>
+          <label>Filter groups</label><textarea name="group_filter" placeholder="Comma-separated"></textarea>
+          <label>Optimizer</label>
+          <select name="optimizer"><option value="OrTools">OR-Tools</option><option value="NearestNeighbor">Nearest Neighbor</option></select>
+          <label><input type="checkbox" name="skip_geometry" id="skipGeometry"> Fast mode (straight lines)</label>
+        </details>
+      </form>
+    </div>
+  </div>
+  <script>
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+    const preview = document.getElementById('preview');
+    const jobId = document.getElementById('jobId');
+    const submitBtn = document.getElementById('submitBtn');
+    dropzone.onclick = () => fileInput.click();
+    dropzone.ondragover = e => { e.preventDefault(); };
+    dropzone.ondrop = e => { e.preventDefault(); if (e.dataTransfer.files[0]) { fileInput.files = e.dataTransfer.files; uploadPreview(e.dataTransfer.files[0]); }};
+    fileInput.onchange = () => { if (fileInput.files[0]) uploadPreview(fileInput.files[0]); };
+    async function uploadPreview(file) {
+      document.getElementById('fileName').textContent = file.name;
+      submitBtn.disabled = true;
+      preview.className = 'preview visible';
+      preview.textContent = 'Analyzing...';
+      const fd = new FormData(); fd.append('file', file);
+      try {
+        const res = await fetch('/api/preview', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        jobId.value = data.job_id;
+        if (data.start_lat) document.getElementById('startLat').value = data.start_lat;
+        if (data.start_lng) document.getElementById('startLng').value = data.start_lng;
+        if (data.recommended_skip_geometry) document.getElementById('skipGeometry').checked = true;
+        preview.innerHTML = `<strong>Ready:</strong> ${data.summary}` + (data.warnings?.length ? '<br><span style="color:#e65100">'+data.warnings.join('<br>')+'</span>' : '');
+        submitBtn.disabled = false;
+      } catch (err) { preview.className = 'preview visible error'; preview.textContent = err.message; }
+    }
+    document.getElementById('planForm').onsubmit = () => { submitBtn.disabled = true; submitBtn.textContent = 'Generating routes...'; };
+  </script>
+</body>
+</html>

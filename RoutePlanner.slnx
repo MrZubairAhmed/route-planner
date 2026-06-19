@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/RoutePlanner.Cli/RoutePlanner.Cli.csproj" />
+    <Project Path="src/RoutePlanner.Core/RoutePlanner.Core.csproj" />
+    <Project Path="src/RoutePlanner.Web/RoutePlanner.Web.csproj" />
+  </Folder>
+</Solution>

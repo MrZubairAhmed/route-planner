@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Route Planner</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f0f2f5; margin: 0; padding: 24px; }
+    .container { max-width: 720px; margin: 0 auto; }
+    .card { background: #fff; border-radius: 12px; padding: 28px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); margin-bottom: 20px; }
+    h1 { margin: 0 0 6px; color: #1a1a1a; }
+    .subtitle { color: #666; margin-bottom: 20px; line-height: 1.5; }
+    label { display: block; font-weight: 600; margin: 14px 0 6px; font-size: 0.9rem; }
+    input, select, textarea { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.95rem; }
+    textarea { min-height: 60px; resize: vertical; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .dropzone {
+      border: 2px dashed #4285F4; border-radius: 10px; padding: 36px 24px; text-align: center;
+      background: #f8fbff; cursor: pointer; transition: background 0.2s;
+    }
+    .dropzone:hover, .dropzone.dragover { background: #e8f0fe; }
+    .dropzone input { display: none; }
+    .preview {
+      background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 8px;
+      padding: 14px; margin-top: 16px; font-size: 0.9rem; color: #2e7d32; display: none;
+    }
+    .preview.error { background: #fce8e6; border-color: #f5c6cb; color: #c5221f; }
+    .preview.visible { display: block; }
+    .preview-warn { color: #e65100; font-size: 0.85rem; margin-top: 8px; }
+    .btn {
+      display: inline-block; margin-top: 16px; padding: 14px 24px; background: #4285F4;
+      color: #fff; border: none; border-radius: 8px; font-size: 1rem; font-weight: 600;
+      cursor: pointer; width: 100%;
+    }
+    .btn:disabled { background: #aaa; cursor: not-allowed; }
+    .btn-secondary {
+      background: #fff; color: #4285F4; border: 1px solid #4285F4; width: auto;
+      padding: 8px 16px; font-size: 0.85rem; margin-top: 0;
+    }
+    .hint { font-size: 0.8rem; color: #888; margin-top: 4px; }
+    .format-box {
+      background: #f8f9fa; border-radius: 8px; padding: 14px; margin-bottom: 20px;
+      font-size: 0.85rem; color: #555; line-height: 1.6;
+    }
+    .format-box code { background: #e8eaed; padding: 2px 6px; border-radius: 4px; }
+    .hidden-ui { display: none !important; }
+    details { margin-top: 16px; }
+    summary { cursor: pointer; color: #4285F4; font-weight: 600; font-size: 0.9rem; }
+    .advanced { padding-top: 12px; }
+    .checkbox-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+    .checkbox-row input { width: auto; }
+    .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>Route Planner</h1>
+      <p class="subtitle">
+        Upload any Excel file with location coordinates — routes are optimized automatically
+        using the data in your sheet.
+      </p>
+
+      <div class="format-box hidden-ui">
+        <strong>Expected Excel columns</strong> (same format every time):<br>
+        Required: <code>Latitude</code>, <code>Longitude</code><br>
+        Recommended: <code>Start LAT</code>, <code>Start LNG</code>, <code>Name</code><br>
+        Optional: <code>District</code>, <code>Tehsil</code>, <code>SchoolCode</code>
+      </div>
+
+      <div class="toolbar">
+        <a class="btn btn-secondary" href="/api/template">Download blank template</a>
+      </div>
+
+      <form id="planForm" action="/plan" method="post">
+        <input type="hidden" name="job_id" id="jobId">
+
+        <div class="dropzone" id="dropzone">
+          <input type="file" id="fileInput" accept=".xlsx,.xls">
+          <p><strong>Drop your Excel file here</strong> or click to browse</p>
+          <p class="hint" id="fileName">No file selected</p>
+        </div>
+
+        <div class="preview" id="preview"></div>
+
+        <button type="submit" class="btn" id="submitBtn" disabled>Generate Routes</button>
+
+        <details class="hidden-ui">
+          <summary>Advanced options</summary>
+          <div class="advanced">
+            <div class="row">
+              <div>
+                <label for="startLat">Start Latitude (override)</label>
+                <input type="text" name="start_lat" id="startLat" placeholder="Auto from Excel">
+              </div>
+              <div>
+                <label for="startLng">Start Longitude (override)</label>
+                <input type="text" name="start_lng" id="startLng" placeholder="Auto from Excel">
+              </div>
+            </div>
+
+            <label for="batchBy">Batch mode</label>
+            <select name="batch_by" id="batchBy">
+              <option value="auto" selected>Auto (detect from file)</option>
+              <option value="none">Single route (all locations)</option>
+              <option value="district">Batch by District</option>
+              <option value="tehsil">Batch by Tehsil</option>
+            </select>
+
+            <label for="groupFilter">Filter groups (optional)</label>
+            <textarea name="group_filter" id="groupFilter" placeholder="Comma-separated district/tehsil names"></textarea>
+
+            <div class="row">
+              <div>
+                <label for="optimizer">Optimizer</label>
+                <select name="optimizer" id="optimizer">
+                  <option value="ortools">OR-Tools TSP</option>
+                  <option value="nearest_neighbor">Nearest Neighbor</option>
+                </select>
+              </div>
+              <div>
+                <label for="maxWaypoints">Max waypoints per Google Maps URL</label>
+                <input type="number" name="max_waypoints" id="maxWaypoints" value="23" min="1" max="23">
+              </div>
+            </div>
+
+            <label for="maxStops">Max locations per batch (auto-split large groups)</label>
+            <input type="number" name="max_stops_per_batch" id="maxStops" value="150" min="10" max="500">
+
+            <div class="checkbox-row">
+              <input type="checkbox" name="skip_geometry" id="skipGeometry">
+              <label for="skipGeometry" style="margin:0;font-weight:normal">Fast mode (straight lines on map)</label>
+            </div>
+          </div>
+        </details>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+    const fileName = document.getElementById('fileName');
+    const preview = document.getElementById('preview');
+    const jobId = document.getElementById('jobId');
+    const submitBtn = document.getElementById('submitBtn');
+    const startLat = document.getElementById('startLat');
+    const startLng = document.getElementById('startLng');
+    const batchBy = document.getElementById('batchBy');
+    const skipGeometry = document.getElementById('skipGeometry');
+
+    dropzone.addEventListener('click', () => fileInput.click());
+    dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+      if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', () => { if (fileInput.files.length) uploadFile(fileInput.files[0]); });
+
+    async function uploadFile(file) {
+      fileName.textContent = file.name;
+      submitBtn.disabled = true;
+      preview.className = 'preview visible';
+      preview.textContent = 'Analyzing Excel format...';
+
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        const res = await fetch('/api/preview', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Could not read Excel file');
+
+        jobId.value = data.job_id;
+        if (data.start_lat) startLat.value = data.start_lat;
+        if (data.start_lng) startLng.value = data.start_lng;
+        if (data.recommended_skip_geometry) skipGeometry.checked = true;
+
+        let html = `<strong>Ready to plan:</strong> ${data.summary}`;
+        if (data.recommended_batch_by !== 'none') {
+          html += `<br>Will batch by <strong>${data.recommended_batch_by}</strong> (${data.recommended_batch_by === 'district' ? data.district_count : data.tehsil_count} groups)`;
+        } else {
+          html += '<br>Will create a <strong>single optimized route</strong>';
+        }
+        if (data.warnings && data.warnings.length) {
+          html += '<div class="preview-warn">' + data.warnings.join('<br>') + '</div>';
+        }
+        preview.innerHTML = html;
+        preview.classList.remove('error');
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Generate Routes';
+      } catch (err) {
+        preview.innerHTML = err.message;
+        preview.classList.add('error');
+      }
+    }
+
+    document.getElementById('planForm').addEventListener('submit', () => {
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Generating routes... please wait';
+    });
+  </script>
+</body>
+</html>

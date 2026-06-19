@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Route Results</title>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f0f2f5; margin: 0; padding: 24px; }
+    .container { max-width: 800px; margin: 0 auto; }
+    .card { background: #fff; border-radius: 12px; padding: 28px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); margin-bottom: 16px; }
+    h1 { margin: 0 0 16px; }
+    .stat { color: #555; margin: 6px 0; }
+    .btn { display: inline-block; padding: 10px 18px; background: #4285F4; color: #fff; text-decoration: none; border-radius: 8px; margin: 6px 6px 6px 0; font-size: 0.9rem; }
+    .btn.green { background: #34A853; }
+    a.back { color: #4285F4; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <p><a class="back" href="/">&larr; Plan another route</a></p>
+    <div class="card">
+      <h1>Routes Generated</h1>
+      {% if profile %}<p class="stat">{{ profile.summary() }}</p>{% endif %}
+      <p class="stat"><strong>{{ planned.ordered_stops|length }}</strong> destinations</p>
+      <p class="stat"><strong>{{ "%.1f"|format(planned.total_distance_km) }} km</strong> total road distance</p>
+      <p class="stat"><strong>{{ "%.1f"|format(planned.total_duration_sec / 3600) }} hours</strong> estimated drive time</p>
+      <p class="stat"><strong>{{ planned.chunks|length }}</strong> Google Maps navigation chunk(s)</p>
+
+      <a class="btn green" href="{{ url_for('serve_file', job_id=job_id, filename='route_map.html') }}" target="_blank">Open Interactive Map</a>
+      <a class="btn" href="{{ url_for('serve_file', job_id=job_id, filename='optimized_route.xlsx') }}">Download Excel</a>
+      <a class="btn" href="{{ url_for('serve_file', job_id=job_id, filename='optimized_route.kml') }}">Download KML</a>
+      <a class="btn" href="{{ url_for('serve_file', job_id=job_id, filename='optimized_route.gpx') }}">Download GPX</a>
+    </div>
+
+    <div class="card">
+      <h2>Google Maps Navigation</h2>
+      {% for chunk in planned.chunks %}
+      <p>
+        <a class="btn" href="{{ chunk.google_maps_url }}" target="_blank">
+          Route {{ chunk.route_no }} ({{ "%.1f"|format(chunk.total_distance_km) }} km)
+        </a>
+      </p>
+      {% endfor %}
+    </div>
+  </div>
+</body>
+</html>

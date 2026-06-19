@@ -1,0 +1,17 @@
+output/
+web_jobs/
+**/web_jobs/
+tools/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/

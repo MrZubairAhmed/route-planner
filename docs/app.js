@@ -1,10 +1,8 @@
 const OSRM = 'https://router.project-osrm.org';
-const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
 const MAX_WAYPOINTS = 23;
 
 let parsed = null;
 let lastResults = null;
-const geocodeCache = new Map();
 
 const $ = id => document.getElementById(id);
 const dropzone = $('dropzone');
@@ -42,41 +40,50 @@ function buildPlaceQuery(name, district) {
   return [name, district, 'Pakistan'].filter(Boolean).join(', ');
 }
 
-function buildDistrictTehsilQuery(tehsil, district) {
-  return [tehsil, district, 'Pakistan'].filter(Boolean).join(', ');
-}
-
-function pickRandomStop(stops) {
-  if (!stops?.length) return null;
-  const idx = Math.floor(Math.random() * stops.length);
-  return stops[idx];
-}
-
-async function geocodePlace(query) {
-  if (!query) return null;
-  if (geocodeCache.has(query)) return geocodeCache.get(query);
-  try {
-    const params = new URLSearchParams({
-      q: query,
-      format: 'json',
-      limit: '1',
-      countrycodes: 'pk',
-      addressdetails: '0',
-    });
-    const res = await fetch(`${NOMINATIM}?${params.toString()}`);
-    if (!res.ok) {
-      geocodeCache.set(query, null);
-      return null;
-    }
-    const data = await res.json();
-    const item = Array.isArray(data) && data.length ? data[0] : null;
-    const coords = item ? { lat: Number(item.lat), lng: Number(item.lon) } : null;
-    geocodeCache.set(query, coords);
-    return coords;
-  } catch {
-    geocodeCache.set(query, null);
-    return null;
+function resolveGroupStartForDisplay(group) {
+  if (group.startingPoint && group.startingPoint !== '(No starting point)') {
+    return {
+      name: group.startingPoint,
+      district: group.district,
+      placeQuery: buildPlaceQuery(group.startingPoint, group.district),
+    };
   }
+  if (parsed?.start) return { ...parsed.start };
+  const first = group.stops[0];
+  return { lat: first.lat, lng: first.lng, name: 'Start' };
+}
+
+function nearestStop(stops, point, exclude = null) {
+  let best = null;
+  let bestD = Infinity;
+  for (const stop of stops) {
+    if (exclude && coordsMatch(stop, exclude)) continue;
+    const d = haversine(stop, point);
+    if (d < bestD) {
+      bestD = d;
+      best = stop;
+    }
+  }
+  return best;
+}
+
+/** Pick a stop in the batch that is near the route's ending destination. */
+function pickOriginNearEnd(stops) {
+  if (!stops.length) return null;
+  if (stops.length === 1) return { ...stops[0], name: stops[0].name || 'Start' };
+  const ending = stops[stops.length - 1];
+  const candidates = stops.slice(0, -1);
+  const origin = nearestStop(candidates, ending) || stops[0];
+  return { ...origin, name: origin.name || 'Start' };
+}
+
+function visitStopsForUrl(origin, orderedStops) {
+  if (!orderedStops.length) return [];
+  const ending = orderedStops[orderedStops.length - 1];
+  let visit = orderedStops.filter(s => !coordsMatch(s, origin));
+  if (!visit.length) visit = [...orderedStops];
+  const middle = visit.filter(s => !coordsMatch(s, ending));
+  return coordsMatch(ending, origin) ? middle : [...middle, ending];
 }
 
 async function loadFile(file) {
@@ -197,48 +204,6 @@ function groupDestinations(destinations, batchBy) {
   return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([name, stops]) => ({ name, stops }));
 }
 
-async function resolveGroupStart(group) {
-  if (group.startingPoint && group.startingPoint !== '(No starting point)') {
-    const tehsilFromStops = group.stops.find(s => s.tehsil)?.tehsil || '';
-    const startQuery = buildPlaceQuery(group.startingPoint, group.district);
-    const found = await geocodePlace(startQuery);
-    if (found) {
-      return {
-        name: group.startingPoint,
-        district: group.district,
-        placeQuery: startQuery,
-        lat: found.lat,
-        lng: found.lng,
-      };
-    }
-
-    // Fallback: pick a random location from same district/tehsil records.
-    const randomStop = pickRandomStop(group.stops);
-    if (randomStop) {
-      const fallbackQuery = buildDistrictTehsilQuery(randomStop.tehsil || tehsilFromStops, group.district);
-      return {
-        name: randomStop.name || `${group.district} fallback`,
-        district: group.district,
-        tehsil: randomStop.tehsil || tehsilFromStops,
-        placeQuery: fallbackQuery || buildPlaceQuery(group.startingPoint, group.district),
-        lat: randomStop.lat,
-        lng: randomStop.lng,
-      };
-    }
-
-    return {
-      name: group.startingPoint,
-      district: group.district,
-      placeQuery: startQuery,
-      lat: null,
-      lng: null,
-    };
-  }
-  if (parsed?.start) return { ...parsed.start };
-  const first = group.stops[0];
-  return { lat: first.lat, lng: first.lng, name: 'Start' };
-}
-
 function haversine(a, b) {
   const R = 6371000;
   const toR = x => x * Math.PI / 180;
@@ -291,9 +256,7 @@ function nearestNeighbor(matrix, startIdx = 0) {
 
 function googleUrl(start, destinations) {
   const fmtCoord = s => encodeURIComponent(`${s.lat},${s.lng}`);
-  const origin = start.placeQuery
-    ? encodeURIComponent(start.placeQuery)
-    : fmtCoord(start);
+  const origin = fmtCoord(start);
   if (!destinations.length) {
     return `https://www.google.com/maps/dir/?api=1&origin=${origin}&travelmode=driving`;
   }
@@ -304,51 +267,39 @@ function googleUrl(start, destinations) {
   return url;
 }
 
-function splitChunks(start, ordered, maxWp) {
+function splitChunks(ordered, maxWp) {
   const maxDest = maxWp + 1;
   const chunks = [];
   let cursor = 0;
   let routeNo = 1;
-  let currentStart = { ...start };
   while (cursor < ordered.length) {
     const batch = ordered.slice(cursor, cursor + maxDest);
+    const origin = pickOriginNearEnd(batch);
+    const visit = visitStopsForUrl(origin, batch);
     chunks.push({
       routeNo,
-      url: googleUrl(currentStart, batch),
+      url: googleUrl(origin, visit),
       stops: batch,
-      startLabel: currentStart.placeQuery || currentStart.name || 'Start',
+      startLabel: origin.name || 'Start',
+      mapsOrigin: origin,
     });
-    if (batch.length) {
-      currentStart = start.placeQuery
-        ? { ...batch[batch.length - 1] }
-        : { ...batch[batch.length - 1] };
-    }
     cursor += batch.length;
     routeNo++;
   }
   return chunks;
 }
 
-async function planGroup(group, start) {
+async function planGroup(group) {
   const stops = group.stops;
   if (!stops.length) throw new Error('No stops in group');
 
   statusEl.textContent = `Optimizing ${group.name} (${stops.length} locations)...`;
 
-  let destOrdered;
-  if (start.lat != null && start.lng != null) {
-    const all = [{ lat: start.lat, lng: start.lng, name: start.name || 'Start', rowIndex: null }, ...stops];
-    const matrix = await distanceMatrix(all);
-    const orderIdx = nearestNeighbor(matrix, 0);
-    destOrdered = orderIdx.map(i => all[i]).slice(1);
-  } else {
-    const matrix = await distanceMatrix(stops);
-    const orderIdx = nearestNeighbor(matrix, 0);
-    destOrdered = orderIdx.map(i => stops[i]);
-  }
-
-  const chunks = splitChunks(start, destOrdered, MAX_WAYPOINTS);
-  return { name: group.name, stopCount: stops.length, stops, chunks, start };
+  const matrix = await distanceMatrix(stops);
+  const orderIdx = nearestNeighbor(matrix, 0);
+  const destOrdered = orderIdx.map(i => stops[i]);
+  const chunks = splitChunks(destOrdered, MAX_WAYPOINTS);
+  return { name: group.name, stopCount: stops.length, stops, chunks };
 }
 
 function ensureCol(headers, rows, colIndex, name) {
@@ -467,8 +418,8 @@ async function generateRoutes() {
 
   for (const g of groups) {
     try {
-      const start = parsed.hasStartingPoint ? await resolveGroupStart(g) : parsed.start;
-      items.push({ ...(await planGroup(g, start)), error: null });
+      const start = parsed.hasStartingPoint ? resolveGroupStartForDisplay(g) : parsed.start;
+      items.push({ ...(await planGroup(g)), start, error: null });
     } catch (err) {
       items.push({ name: g.name, stopCount: g.stops.length, chunks: [], error: err.message });
     }

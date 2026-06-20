@@ -327,6 +327,45 @@ function applyRoutesToExcel(items) {
   return { headers, rows, routeCol, routeNoCol };
 }
 
+/** Group rows so identical Route URLs are adjacent, then merge Route column cells. */
+function prepareRouteColumnForExport(rows, routeCol, routeNoCol) {
+  const header = rows[0];
+  const indexed = rows.slice(1).map((row, i) => ({ row, i }));
+
+  indexed.sort((a, b) => {
+    const urlA = String(a.row[routeCol] || '');
+    const urlB = String(b.row[routeCol] || '');
+    const hasA = urlA.startsWith('http');
+    const hasB = urlB.startsWith('http');
+    if (hasA !== hasB) return hasA ? -1 : 1;
+    if (urlA !== urlB) return urlA.localeCompare(urlB);
+    const noA = Number(a.row[routeNoCol]) || 0;
+    const noB = Number(b.row[routeNoCol]) || 0;
+    if (noA !== noB) return noA - noB;
+    return a.i - b.i;
+  });
+
+  const sorted = [header, ...indexed.map(entry => entry.row)];
+  const merges = [];
+  let i = 1;
+  while (i < sorted.length) {
+    const url = sorted[i][routeCol];
+    if (!url || !String(url).startsWith('http')) {
+      i++;
+      continue;
+    }
+    let j = i + 1;
+    while (j < sorted.length && sorted[j][routeCol] === url) j++;
+    if (j - i > 1) {
+      merges.push({ s: { r: i, c: routeCol }, e: { r: j - 1, c: routeCol } });
+      for (let k = i + 1; k < j; k++) sorted[k][routeCol] = '';
+    }
+    i = j;
+  }
+
+  return { rows: sorted, merges };
+}
+
 function addRouteHyperlinks(ws, rows, routeCol) {
   for (let r = 1; r < rows.length; r++) {
     const url = rows[r][routeCol];
@@ -338,8 +377,10 @@ function addRouteHyperlinks(ws, rows, routeCol) {
 }
 
 function downloadRoutedExcel(items) {
-  const { rows, routeCol } = applyRoutesToExcel(items);
+  const { rows: routedRows, routeCol, routeNoCol } = applyRoutesToExcel(items);
+  const { rows, merges } = prepareRouteColumnForExport(routedRows, routeCol, routeNoCol);
   const ws = XLSX.utils.aoa_to_sheet(rows);
+  if (merges.length) ws['!merges'] = merges;
   addRouteHyperlinks(ws, rows, routeCol);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, parsed.sheetName || 'Sheet1');

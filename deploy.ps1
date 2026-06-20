@@ -57,16 +57,16 @@ if (-not $remote) {
     git push -u origin $branch
 }
 
-$repoUrl = (gh repo view --json url -q .url)
+$repoUrl = gh repo view --json url -q .url
+Write-Host ""
+Write-Host "Deploy guides: DEPLOY-PLATFORMS.md"
+Write-Host ""
+Write-Host "Recommended free hosts (NO database):"
+Write-Host "  1. Northflank  -> https://app.northflank.com  (Dockerfile, port 8080)"
+Write-Host "  2. Zeabur      -> https://zeabur.com          (Dockerfile, port 8080)"
+Write-Host "  3. Back4app    -> https://www.back4app.com    (256MB limit)"
+Write-Host "  4. Render      -> render.yaml in repo"
+Write-Host ""
+Write-Host "Instant test (PC on): start-free.cmd"
 Write-Host ""
 Write-Host "Repository: $repoUrl"
-Write-Host ""
-Write-Host "FREE deployment (no credit card): Koyeb"
-Write-Host "  1. Sign up: https://www.koyeb.com (Continue with GitHub, Hobby plan)"
-Write-Host "  2. Create Web Service -> GitHub -> route-planner repo"
-Write-Host "  3. Builder: Dockerfile | Port: 8080 | Instance: Free/Eco"
-Write-Host "  4. Deploy -> URL: https://YOUR-APP.koyeb.app"
-Write-Host ""
-Write-Host "Instant test URL (PC must stay on): run start-free.cmd"
-Write-Host ""
-Write-Host "Full guide: DEPLOY-FREE.md"

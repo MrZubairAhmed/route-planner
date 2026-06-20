@@ -21,23 +21,17 @@ Open http://localhost:8080
 
 ## Free deployment
 
-See **[DEPLOY-FREE.md](DEPLOY-FREE.md)** for all options.
+See **[DEPLOY-PLATFORMS.md](DEPLOY-PLATFORMS.md)** for step-by-step guides.
 
-| Method | Cost | Credit card | Always on |
-|--------|------|-------------|-----------|
-| `start-free.cmd` | Free | No | Only while PC runs |
-| [Koyeb](https://www.koyeb.com) Hobby | Free | **No** | Yes |
-| Oracle Cloud Free VM | Free | Verification only | Yes |
+| Platform | Card | Database | Best for |
+|----------|------|----------|----------|
+| **Northflank** | No | Not required | Free cloud hosting |
+| **Zeabur** | Free credits | Not required | Docker from GitHub |
+| **Back4app** | No | Not required | Small files (256MB RAM) |
+| **Render** | Sometimes | Not required | Blueprint deploy |
+| **start-free.cmd** | No | — | Instant test URL |
 
-**Recommended:** Koyeb — sign up with GitHub, deploy from repo using the included `Dockerfile`, port **8080**.
-
-After GitHub login:
-
-```powershell
-deploy.cmd
-```
-
-Then follow the Koyeb steps in `DEPLOY-FREE.md`.
+**Do not add PostgreSQL** on any platform — this app stores files on disk only.
 
 ## CLI
 

@@ -11,6 +11,9 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
 WORKDIR /app
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080
 ENV PORT=8080
+ENV ASPNETCORE_ENVIRONMENT=Production
+ENV DOTNET_EnableDiagnostics=0
+ENV DOTNET_gcServer=0
 EXPOSE 8080
 COPY --from=build /app/publish .
 RUN mkdir -p /app/web_jobs

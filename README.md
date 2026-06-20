@@ -19,14 +19,25 @@ dotnet run --project src/RoutePlanner.Web -c Release --no-launch-profile --urls 
 
 Open http://localhost:8080
 
-## Deploy to Render (recommended)
+## Free deployment
 
-1. Push this repo to GitHub.
-2. Sign in at [render.com](https://render.com).
-3. **New → Blueprint** and connect the GitHub repo (Render reads `render.yaml`).
-4. Deploy. Your app will be available at `https://route-planner-xxxx.onrender.com`.
+See **[DEPLOY-FREE.md](DEPLOY-FREE.md)** for all options.
 
-The included `Dockerfile` builds the ASP.NET Core web app for Linux containers.
+| Method | Cost | Credit card | Always on |
+|--------|------|-------------|-----------|
+| `start-free.cmd` | Free | No | Only while PC runs |
+| [Koyeb](https://www.koyeb.com) Hobby | Free | **No** | Yes |
+| Oracle Cloud Free VM | Free | Verification only | Yes |
+
+**Recommended:** Koyeb — sign up with GitHub, deploy from repo using the included `Dockerfile`, port **8080**.
+
+After GitHub login:
+
+```powershell
+deploy.cmd
+```
+
+Then follow the Koyeb steps in `DEPLOY-FREE.md`.
 
 ## CLI
 

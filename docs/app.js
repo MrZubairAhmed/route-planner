@@ -1,5 +1,7 @@
 const OSRM = 'https://router.project-osrm.org';
-const MAX_WAYPOINTS = 23;
+/** Google Maps URLs on iPhone support at most 9 waypoints (plus destination). */
+const MAX_WAYPOINTS = 8;
+const MAPS_DIR_URL = 'https://maps.google.com/maps/dir/?api=1';
 
 let parsed = null;
 let lastResults = null;
@@ -224,16 +226,20 @@ function nearestNeighbor(matrix, startIdx = 0) {
 }
 
 function googleUrl(start, destinations) {
-  const fmtCoord = s => encodeURIComponent(`${s.lat},${s.lng}`);
+  const fmtCoord = s => {
+    const lat = Number(s.lat).toFixed(6);
+    const lng = Number(s.lng).toFixed(6);
+    return encodeURIComponent(`${lat},${lng}`);
+  };
   const origin = start.placeQuery
     ? encodeURIComponent(start.placeQuery)
     : fmtCoord(start);
   if (!destinations.length) {
-    return `https://www.google.com/maps/dir/?api=1&origin=${origin}&travelmode=driving`;
+    return `${MAPS_DIR_URL}&origin=${origin}&travelmode=driving`;
   }
   const dest = fmtCoord(destinations[destinations.length - 1]);
-  const wps = destinations.slice(0, -1).map(fmtCoord).join('|');
-  let url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&travelmode=driving`;
+  const wps = destinations.slice(0, -1).map(fmtCoord).join('%7C');
+  let url = `${MAPS_DIR_URL}&origin=${origin}&destination=${dest}&travelmode=driving`;
   if (wps) url += `&waypoints=${wps}`;
   return url;
 }
@@ -374,6 +380,7 @@ function addRouteHyperlinks(ws, rows, routeCol) {
     if (!url || !String(url).startsWith('http')) continue;
     const addr = XLSX.utils.encode_cell({ r, c: routeCol });
     if (!ws[addr]) continue;
+    ws[addr].v = 'Open Route';
     ws[addr].l = { Target: String(url), Tooltip: 'Open route in Google Maps' };
   }
 }

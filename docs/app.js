@@ -374,14 +374,25 @@ function formatRoutesColumnLikeReference(rows, routeCol) {
   return { rows: sorted, merges };
 }
 
+function routeLinkStyle() {
+  return {
+    font: {
+      color: { rgb: '0563C1' },
+      underline: true,
+    },
+  };
+}
+
 function addRouteHyperlinks(ws, rows, routeCol) {
   for (let r = 1; r < rows.length; r++) {
     const url = rows[r][routeCol];
     if (!url || !String(url).startsWith('http')) continue;
     const addr = XLSX.utils.encode_cell({ r, c: routeCol });
-    if (!ws[addr]) continue;
-    ws[addr].v = 'Open Route';
+    if (!ws[addr]) ws[addr] = { t: 's', v: String(url) };
+    ws[addr].v = String(url);
+    ws[addr].t = 's';
     ws[addr].l = { Target: String(url), Tooltip: 'Open route in Google Maps' };
+    ws[addr].s = routeLinkStyle();
   }
 }
 

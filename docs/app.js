@@ -40,50 +40,19 @@ function buildPlaceQuery(name, district) {
   return [name, district, 'Pakistan'].filter(Boolean).join(', ');
 }
 
-function resolveGroupStartForDisplay(group) {
+function resolveGroupStart(group) {
   if (group.startingPoint && group.startingPoint !== '(No starting point)') {
     return {
       name: group.startingPoint,
       district: group.district,
       placeQuery: buildPlaceQuery(group.startingPoint, group.district),
+      lat: null,
+      lng: null,
     };
   }
   if (parsed?.start) return { ...parsed.start };
   const first = group.stops[0];
   return { lat: first.lat, lng: first.lng, name: 'Start' };
-}
-
-function nearestStop(stops, point, exclude = null) {
-  let best = null;
-  let bestD = Infinity;
-  for (const stop of stops) {
-    if (exclude && coordsMatch(stop, exclude)) continue;
-    const d = haversine(stop, point);
-    if (d < bestD) {
-      bestD = d;
-      best = stop;
-    }
-  }
-  return best;
-}
-
-/** Pick a stop in the batch that is near the route's ending destination. */
-function pickOriginNearEnd(stops) {
-  if (!stops.length) return null;
-  if (stops.length === 1) return { ...stops[0], name: stops[0].name || 'Start' };
-  const ending = stops[stops.length - 1];
-  const candidates = stops.slice(0, -1);
-  const origin = nearestStop(candidates, ending) || stops[0];
-  return { ...origin, name: origin.name || 'Start' };
-}
-
-function visitStopsForUrl(origin, orderedStops) {
-  if (!orderedStops.length) return [];
-  const ending = orderedStops[orderedStops.length - 1];
-  let visit = orderedStops.filter(s => !coordsMatch(s, origin));
-  if (!visit.length) visit = [...orderedStops];
-  const middle = visit.filter(s => !coordsMatch(s, ending));
-  return coordsMatch(ending, origin) ? middle : [...middle, ending];
 }
 
 async function loadFile(file) {
@@ -256,7 +225,9 @@ function nearestNeighbor(matrix, startIdx = 0) {
 
 function googleUrl(start, destinations) {
   const fmtCoord = s => encodeURIComponent(`${s.lat},${s.lng}`);
-  const origin = fmtCoord(start);
+  const origin = start.placeQuery
+    ? encodeURIComponent(start.placeQuery)
+    : fmtCoord(start);
   if (!destinations.length) {
     return `https://www.google.com/maps/dir/?api=1&origin=${origin}&travelmode=driving`;
   }
@@ -267,39 +238,49 @@ function googleUrl(start, destinations) {
   return url;
 }
 
-function splitChunks(ordered, maxWp) {
+function splitChunks(start, ordered, maxWp) {
   const maxDest = maxWp + 1;
   const chunks = [];
   let cursor = 0;
   let routeNo = 1;
+  let currentStart = { ...start };
   while (cursor < ordered.length) {
     const batch = ordered.slice(cursor, cursor + maxDest);
-    const origin = pickOriginNearEnd(batch);
-    const visit = visitStopsForUrl(origin, batch);
     chunks.push({
       routeNo,
-      url: googleUrl(origin, visit),
+      url: googleUrl(currentStart, batch),
       stops: batch,
-      startLabel: origin.name || 'Start',
-      mapsOrigin: origin,
+      startLabel: currentStart.placeQuery || currentStart.name || 'Start',
     });
+    if (batch.length) {
+      currentStart = { ...batch[batch.length - 1] };
+    }
     cursor += batch.length;
     routeNo++;
   }
   return chunks;
 }
 
-async function planGroup(group) {
+async function planGroup(group, start) {
   const stops = group.stops;
   if (!stops.length) throw new Error('No stops in group');
 
   statusEl.textContent = `Optimizing ${group.name} (${stops.length} locations)...`;
 
-  const matrix = await distanceMatrix(stops);
-  const orderIdx = nearestNeighbor(matrix, 0);
-  const destOrdered = orderIdx.map(i => stops[i]);
-  const chunks = splitChunks(destOrdered, MAX_WAYPOINTS);
-  return { name: group.name, stopCount: stops.length, stops, chunks };
+  let destOrdered;
+  if (start.lat != null && start.lng != null) {
+    const all = [{ lat: start.lat, lng: start.lng, name: start.name || 'Start', rowIndex: null }, ...stops];
+    const matrix = await distanceMatrix(all);
+    const orderIdx = nearestNeighbor(matrix, 0);
+    destOrdered = orderIdx.map(i => all[i]).slice(1);
+  } else {
+    const matrix = await distanceMatrix(stops);
+    const orderIdx = nearestNeighbor(matrix, 0);
+    destOrdered = orderIdx.map(i => stops[i]);
+  }
+
+  const chunks = splitChunks(start, destOrdered, MAX_WAYPOINTS);
+  return { name: group.name, stopCount: stops.length, stops, chunks, start };
 }
 
 function ensureCol(headers, rows, colIndex, name) {
@@ -418,8 +399,8 @@ async function generateRoutes() {
 
   for (const g of groups) {
     try {
-      const start = parsed.hasStartingPoint ? resolveGroupStartForDisplay(g) : parsed.start;
-      items.push({ ...(await planGroup(g)), start, error: null });
+      const start = parsed.hasStartingPoint ? resolveGroupStart(g) : parsed.start;
+      items.push({ ...(await planGroup(g, start)), error: null });
     } catch (err) {
       items.push({ name: g.name, stopCount: g.stops.length, chunks: [], error: err.message });
     }

@@ -2,6 +2,9 @@ output/
 web_jobs/
 **/web_jobs/
 tools/
+logs/
+netlify-publish/
+tunnel-url.txt
 __pycache__/
 *.py[cod]
 *.egg-info/

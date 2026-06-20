@@ -1,6 +1,6 @@
 [build]
-  publish = "docs"
-  command = "echo Static site — no build required"
+  command = "mkdir -p netlify-publish && cp -r docs/. netlify-publish/"
+  publish = "netlify-publish"
 
 [[headers]]
   for = "/*"
@@ -9,6 +9,11 @@
     X-Content-Type-Options = "nosniff"
 
 [[headers]]
-  for = "/app.js"
+  for = "/*.css"
   [headers.values]
-    Cache-Control = "public, max-age=300"
+    Content-Type = "text/css; charset=utf-8"
+
+[[headers]]
+  for = "/*.js"
+  [headers.values]
+    Content-Type = "application/javascript; charset=utf-8"

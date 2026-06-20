@@ -36,6 +36,10 @@ function coordsMatch(a, b, eps = 1e-5) {
   return Math.abs(a.lat - b.lat) < eps && Math.abs(a.lng - b.lng) < eps;
 }
 
+function buildPlaceQuery(name, tehsil, district) {
+  return [name, tehsil, district, 'Pakistan'].filter(Boolean).join(', ');
+}
+
 async function loadFile(file) {
   $('fileName').textContent = file.name;
   submitBtn.disabled = true;
@@ -71,6 +75,7 @@ function analyzeRows(rows) {
     nameCol: findCol(headers, ['Name', 'School Name', 'Location Name', 'Destination Name']),
     startLatCol: findCol(headers, ['Start LAT', 'Start Lat', 'Start Latitude', 'Origin Lat']),
     startLngCol: findCol(headers, ['Start LNG', 'Start Lng', 'Start Longitude', 'Origin Lng']),
+    startingPointCol: findCol(headers, ['Starting Point', 'Start Point', 'Start Location', 'Start Name', 'Origin']),
     districtCol: findCol(headers, ['District', 'Region']),
     tehsilCol: findCol(headers, ['Tehsil', 'Tehsil Name', 'Sub District']),
     routeCol: findCol(headers, ['Route', 'Routes', 'GoogleMapsURL', 'Google Maps URL', 'Google Maps Link']),
@@ -78,6 +83,7 @@ function analyzeRows(rows) {
   };
   if (cols.latCol < 0 || cols.lngCol < 0) throw new Error('Required columns not found: Latitude and Longitude');
 
+  const hasStartingPoint = cols.startingPointCol >= 0;
   const destinations = [];
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
@@ -90,34 +96,57 @@ function analyzeRows(rows) {
       name: cols.nameCol >= 0 ? String(row[cols.nameCol] || `Stop ${destinations.length + 1}`) : `Stop ${destinations.length + 1}`,
       district: cols.districtCol >= 0 ? String(row[cols.districtCol] || '').trim() : '',
       tehsil: cols.tehsilCol >= 0 ? String(row[cols.tehsilCol] || '').trim() : '',
+      startingPoint: hasStartingPoint ? String(row[cols.startingPointCol] || '').trim() : '',
     });
   }
   if (!destinations.length) throw new Error('No valid locations found in Excel.');
 
   let startLat = cols.startLatCol >= 0 ? num(rows[1][cols.startLatCol]) : null;
   let startLng = cols.startLngCol >= 0 ? num(rows[1][cols.startLngCol]) : null;
-  if (startLat == null || startLng == null) {
+  if (!hasStartingPoint && (startLat == null || startLng == null)) {
     startLat = destinations[0].lat;
     startLng = destinations[0].lng;
   }
 
-  const districts = [...new Set(destinations.map(d => d.district).filter(Boolean))];
-  const tehsils = [...new Set(destinations.map(d => d.tehsil).filter(Boolean))];
-  let batchBy = 'none';
-  if (districts.length > 1) batchBy = 'district';
-  else if (tehsils.length > 1) batchBy = 'tehsil';
-
-  const summary = `${destinations.length} locations` +
-    (batchBy !== 'none' ? ` · batch by ${batchBy}` : ' · single route');
+  const batchBy = determineBatchMode(destinations, hasStartingPoint);
+  const groupCount = groupDestinations(destinations, batchBy).length;
+  const summary = `${destinations.length} locations · ${groupCount} route batch${groupCount === 1 ? '' : 'es'}` +
+    (hasStartingPoint ? ' · starting point per district/tehsil' : batchBy !== 'none' ? ` · batch by ${batchBy}` : ' · single route');
 
   return {
-    headers, rows, cols, destinations,
-    start: { lat: startLat, lng: startLng, name: 'Start' },
-    batchBy, districts, tehsils, summary,
+    headers, rows, cols, destinations, hasStartingPoint,
+    start: hasStartingPoint ? null : { lat: startLat, lng: startLng, name: 'Start' },
+    batchBy, summary,
   };
 }
 
+function determineBatchMode(destinations, hasStartingPoint) {
+  if (hasStartingPoint) return 'startingPoint';
+  const districts = [...new Set(destinations.map(d => d.district).filter(Boolean))];
+  const tehsils = [...new Set(destinations.map(d => d.tehsil).filter(Boolean))];
+  if (districts.length > 1) return 'district';
+  if (tehsils.length > 1) return 'tehsil';
+  return 'none';
+}
+
 function groupDestinations(destinations, batchBy) {
+  if (batchBy === 'startingPoint') {
+    const map = new Map();
+    for (const d of destinations) {
+      const sp = d.startingPoint || '(No starting point)';
+      const key = `${d.district}\0${d.tehsil}\0${sp}`;
+      if (!map.has(key)) {
+        map.set(key, { district: d.district, tehsil: d.tehsil, startingPoint: sp, stops: [] });
+      }
+      map.get(key).stops.push(d);
+    }
+    return [...map.values()]
+      .sort((a, b) => `${a.district}${a.tehsil}${a.startingPoint}`.localeCompare(`${b.district}${b.tehsil}${b.startingPoint}`))
+      .map(g => ({
+        name: [g.district, g.tehsil, g.startingPoint !== '(No starting point)' ? g.startingPoint : ''].filter(Boolean).join(' · ') || 'All locations',
+        ...g,
+      }));
+  }
   if (batchBy === 'none') return [{ name: 'All locations', stops: destinations }];
   const key = batchBy === 'district' ? 'district' : 'tehsil';
   const map = new Map();
@@ -127,6 +156,22 @@ function groupDestinations(destinations, batchBy) {
     map.get(g).push(d);
   }
   return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([name, stops]) => ({ name, stops }));
+}
+
+function resolveGroupStart(group) {
+  if (group.startingPoint && group.startingPoint !== '(No starting point)') {
+    return {
+      name: group.startingPoint,
+      district: group.district,
+      tehsil: group.tehsil,
+      placeQuery: buildPlaceQuery(group.startingPoint, group.tehsil, group.district),
+      lat: null,
+      lng: null,
+    };
+  }
+  if (parsed?.start) return { ...parsed.start };
+  const first = group.stops[0];
+  return { lat: first.lat, lng: first.lng, name: 'Start' };
 }
 
 function haversine(a, b) {
@@ -160,17 +205,18 @@ async function distanceMatrix(stops) {
   return matrix;
 }
 
-function nearestNeighbor(matrix) {
+function nearestNeighbor(matrix, startIdx = 0) {
   const n = matrix.length;
-  const visited = new Set([0]);
+  const visited = new Set([startIdx]);
   const order = [];
-  let cur = 0;
+  let cur = startIdx;
   while (order.length < n - 1) {
     let best = -1, bestD = Infinity;
-    for (let i = 1; i < n; i++) {
+    for (let i = 0; i < n; i++) {
       if (visited.has(i)) continue;
       if (matrix[cur][i] < bestD) { bestD = matrix[cur][i]; best = i; }
     }
+    if (best < 0) break;
     order.push(best);
     visited.add(best);
     cur = best;
@@ -178,11 +224,16 @@ function nearestNeighbor(matrix) {
   return order;
 }
 
-function googleUrl(stops) {
-  const fmt = s => encodeURIComponent(`${s.lat},${s.lng}`);
-  const origin = fmt(stops[0]);
-  const dest = fmt(stops[stops.length - 1]);
-  const wps = stops.slice(1, -1).map(fmt).join('|');
+function googleUrl(start, destinations) {
+  const fmtCoord = s => encodeURIComponent(`${s.lat},${s.lng}`);
+  const origin = start.placeQuery
+    ? encodeURIComponent(start.placeQuery)
+    : fmtCoord(start);
+  if (!destinations.length) {
+    return `https://www.google.com/maps/dir/?api=1&origin=${origin}&travelmode=driving`;
+  }
+  const dest = fmtCoord(destinations[destinations.length - 1]);
+  const wps = destinations.slice(0, -1).map(fmtCoord).join('|');
   let url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&travelmode=driving`;
   if (wps) url += `&waypoints=${wps}`;
   return url;
@@ -193,12 +244,20 @@ function splitChunks(start, ordered, maxWp) {
   const chunks = [];
   let cursor = 0;
   let routeNo = 1;
-  let currentStart = { ...start, name: start.name || 'Start' };
+  let currentStart = { ...start };
   while (cursor < ordered.length) {
     const batch = ordered.slice(cursor, cursor + maxDest);
-    const chunkStops = [currentStart, ...batch];
-    chunks.push({ routeNo, url: googleUrl(chunkStops), stops: chunkStops });
-    currentStart = { ...batch[batch.length - 1] };
+    chunks.push({
+      routeNo,
+      url: googleUrl(currentStart, batch),
+      stops: batch,
+      startLabel: currentStart.placeQuery || currentStart.name || 'Start',
+    });
+    if (batch.length) {
+      currentStart = start.placeQuery
+        ? { ...batch[batch.length - 1] }
+        : { ...batch[batch.length - 1] };
+    }
     cursor += batch.length;
     routeNo++;
   }
@@ -208,12 +267,21 @@ function splitChunks(start, ordered, maxWp) {
 async function planGroup(group, start) {
   const stops = group.stops;
   if (!stops.length) throw new Error('No stops in group');
-  const all = [{ lat: start.lat, lng: start.lng, name: 'Start', rowIndex: null }, ...stops];
+
   statusEl.textContent = `Optimizing ${group.name} (${stops.length} locations)...`;
-  const matrix = await distanceMatrix(all);
-  const orderIdx = nearestNeighbor(matrix);
-  const ordered = orderIdx.map(i => all[i]);
-  const destOrdered = ordered.slice(1);
+
+  let destOrdered;
+  if (start.lat != null && start.lng != null) {
+    const all = [{ lat: start.lat, lng: start.lng, name: start.name || 'Start', rowIndex: null }, ...stops];
+    const matrix = await distanceMatrix(all);
+    const orderIdx = nearestNeighbor(matrix, 0);
+    destOrdered = orderIdx.map(i => all[i]).slice(1);
+  } else {
+    const matrix = await distanceMatrix(stops);
+    const orderIdx = nearestNeighbor(matrix, 0);
+    destOrdered = orderIdx.map(i => stops[i]);
+  }
+
   const chunks = splitChunks(start, destOrdered, MAX_WAYPOINTS);
   return { name: group.name, stopCount: stops.length, stops, chunks, start };
 }
@@ -235,7 +303,7 @@ function setCell(row, col, value) {
   row[col] = value;
 }
 
-/** Assign the same Google Maps URL to every row in the chunk (start + destinations). */
+/** Map each destination row to its route URL and route number. */
 function applyRoutesToExcel(items) {
   const headers = [...parsed.headers];
   const rows = parsed.rows.map(r => [...r]);
@@ -250,12 +318,9 @@ function applyRoutesToExcel(items) {
     if (item.error) continue;
     for (const chunk of item.chunks) {
       for (const stop of chunk.stops) {
-        for (const s of item.stops) {
-          if (coordsMatch(s, stop)) {
-            setCell(rows[s.rowIndex], routeCol, chunk.url);
-            setCell(rows[s.rowIndex], routeNoCol, chunk.routeNo);
-          }
-        }
+        if (stop.rowIndex == null) continue;
+        setCell(rows[stop.rowIndex], routeCol, chunk.url);
+        setCell(rows[stop.rowIndex], routeNoCol, chunk.routeNo);
       }
     }
   }
@@ -263,9 +328,20 @@ function applyRoutesToExcel(items) {
   return { headers, rows, routeCol, routeNoCol };
 }
 
+function addRouteHyperlinks(ws, rows, routeCol) {
+  for (let r = 1; r < rows.length; r++) {
+    const url = rows[r][routeCol];
+    if (!url || !String(url).startsWith('http')) continue;
+    const addr = XLSX.utils.encode_cell({ r, c: routeCol });
+    if (!ws[addr]) continue;
+    ws[addr].l = { Target: String(url), Tooltip: 'Open route in Google Maps' };
+  }
+}
+
 function downloadRoutedExcel(items) {
-  const { rows } = applyRoutesToExcel(items);
+  const { rows, routeCol } = applyRoutesToExcel(items);
   const ws = XLSX.utils.aoa_to_sheet(rows);
+  addRouteHyperlinks(ws, rows, routeCol);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, parsed.sheetName || 'Sheet1');
   XLSX.writeFile(wb, parsed.fileName || 'routes_output.xlsx');
@@ -278,9 +354,11 @@ async function generateRoutes() {
   statusEl.textContent = 'Starting...';
   const groups = groupDestinations(parsed.destinations, parsed.batchBy);
   const items = [];
+
   for (const g of groups) {
     try {
-      items.push({ ...(await planGroup(g, parsed.start)), error: null });
+      const start = parsed.hasStartingPoint ? resolveGroupStart(g) : parsed.start;
+      items.push({ ...(await planGroup(g, start)), error: null });
     } catch (err) {
       items.push({ name: g.name, stopCount: g.stops.length, chunks: [], error: err.message });
     }
@@ -300,11 +378,14 @@ function showResults(items) {
     if (item.error) {
       return `<div class="card error"><h3>${esc(item.name)}</h3><p class="status-err">Failed: ${esc(item.error)}</p></div>`;
     }
+    const startInfo = item.start?.placeQuery
+      ? `<p class="hint">Start: ${esc(item.start.placeQuery)}</p>`
+      : '';
     const links = item.chunks.map(c => {
       const label = item.chunks.length === 1 ? 'Open Routes' : `Open Routes ${c.routeNo}`;
       return `<a class="btn" href="${esc(c.url)}" target="_blank" rel="noopener">${label}</a>`;
     }).join('');
-    return `<div class="card"><h3>${esc(item.name)}</h3><p>${item.stopCount} locations</p>${links}</div>`;
+    return `<div class="card"><h3>${esc(item.name)}</h3><p>${item.stopCount} locations</p>${startInfo}${links}</div>`;
   }).join('');
 
   $('app').classList.add('hidden');
@@ -336,8 +417,8 @@ function esc(s) {
 
 function downloadTemplate() {
   const ws = XLSX.utils.aoa_to_sheet([
-    ['Name', 'Latitude', 'Longitude', 'Start LAT', 'Start LNG', 'District', 'Tehsil', 'SchoolCode', 'Route', 'RouteNo'],
-    ['Example School', 30.45, 70.90, 31.53, 74.34, 'Sample District', 'Sample Tehsil', 'SCH001', '', ''],
+    ['SchoolCode', 'Name', 'Address', 'District', 'Tehsil', 'Latitude', 'Longitude', 'Starting Point', 'Route', 'RouteNo'],
+    ['SCH001', 'Example School', 'Sample Address', 'Sample District', 'Sample Tehsil', 30.45, 70.90, 'DC Office', '', ''],
   ]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Locations');

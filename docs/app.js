@@ -78,6 +78,7 @@ function analyzeRows(rows) {
     startingPointCol: findCol(headers, ['Starting Point', 'Start Point', 'Start Location', 'Start Name', 'Origin']),
     districtCol: findCol(headers, ['District', 'Region']),
     tehsilCol: findCol(headers, ['Tehsil', 'Tehsil Name', 'Sub District']),
+    addressCol: findCol(headers, ['Address', 'School Address', 'Location Address']),
     routeCol: findCol(headers, ['Route', 'Routes', 'GoogleMapsURL', 'Google Maps URL', 'Google Maps Link']),
     routeNoCol: findCol(headers, ['RouteNo', 'Route No', 'Route Number']),
   };
@@ -327,12 +328,21 @@ function applyRoutesToExcel(items) {
   return { headers, rows, routeCol, routeNoCol };
 }
 
+function rowHasAddress(row, addressCol) {
+  if (addressCol < 0) return true;
+  const value = row[addressCol];
+  if (value == null) return false;
+  const text = String(value).trim();
+  return text !== '' && text.toLowerCase() !== 'null';
+}
+
 /**
  * Match reference export format: group rows with the same route URL together
  * (stable by original row order), keep URL only on the first row of each block,
  * and return merge ranges for the Routes column.
+ * Rows with null/empty Address are never merged.
  */
-function formatRoutesColumnLikeReference(rows, routeCol) {
+function formatRoutesColumnLikeReference(rows, routeCol, addressCol) {
   const header = rows[0];
   const indexed = rows.slice(1).map((row, i) => ({ row, i }));
 
@@ -354,12 +364,16 @@ function formatRoutesColumnLikeReference(rows, routeCol) {
 
   while (i < sorted.length) {
     const url = String(sorted[i][routeCol] || '');
-    if (!url.startsWith('http')) {
+    if (!url.startsWith('http') || !rowHasAddress(sorted[i], addressCol)) {
       i++;
       continue;
     }
     let j = i + 1;
-    while (j < sorted.length && String(sorted[j][routeCol] || '') === url) j++;
+    while (
+      j < sorted.length &&
+      String(sorted[j][routeCol] || '') === url &&
+      rowHasAddress(sorted[j], addressCol)
+    ) j++;
     if (j - i > 1) {
       merges.push({ s: { r: i, c: routeCol }, e: { r: j - 1, c: routeCol } });
       for (let k = i + 1; k < j; k++) sorted[k][routeCol] = '';
@@ -382,7 +396,11 @@ function addRouteHyperlinks(ws, rows, routeCol) {
 
 function downloadRoutedExcel(items) {
   const { rows: routedRows, routeCol } = applyRoutesToExcel(items);
-  const { rows, merges } = formatRoutesColumnLikeReference(routedRows, routeCol);
+  const { rows, merges } = formatRoutesColumnLikeReference(
+    routedRows,
+    routeCol,
+    parsed.cols.addressCol
+  );
   const ws = XLSX.utils.aoa_to_sheet(rows);
   if (merges.length) ws['!merges'] = merges;
   addRouteHyperlinks(ws, rows, routeCol);

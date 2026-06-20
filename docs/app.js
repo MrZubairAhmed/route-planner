@@ -238,19 +238,6 @@ function googleUrl(start, destinations) {
   return url;
 }
 
-/** Merge key: same starting point + same ending destination in the Maps URL. */
-function routeLegKey(url) {
-  try {
-    const params = new URL(String(url)).searchParams;
-    return [
-      params.get('origin') || '',
-      params.get('destination') || '',
-    ].join('\0');
-  } catch {
-    return String(url);
-  }
-}
-
 function splitChunks(start, ordered, maxWp) {
   const maxDest = maxWp + 1;
   const chunks = [];
@@ -321,7 +308,6 @@ function applyRoutesToExcel(items) {
   const rows = parsed.rows.map(r => [...r]);
   let routeCol = parsed.cols.routeCol;
   let routeNoCol = parsed.cols.routeNoCol;
-  const rowLegKeys = new Map();
 
   routeCol = ensureCol(headers, rows, routeCol, 'Routes');
   routeNoCol = ensureCol(headers, rows, routeNoCol, 'RouteNo');
@@ -330,32 +316,27 @@ function applyRoutesToExcel(items) {
   for (const item of items) {
     if (item.error) continue;
     for (const chunk of item.chunks) {
-      const legKey = routeLegKey(chunk.url);
       for (const stop of chunk.stops) {
         if (stop.rowIndex == null) continue;
         setCell(rows[stop.rowIndex], routeCol, chunk.url);
         setCell(rows[stop.rowIndex], routeNoCol, chunk.routeNo);
-        rowLegKeys.set(stop.rowIndex, legKey);
       }
     }
   }
 
-  return { headers, rows, routeCol, routeNoCol, rowLegKeys };
+  return { headers, rows, routeCol, routeNoCol };
 }
 
 /**
- * Group rows by route leg (starting point + ending destination in Maps URL),
- * keep URL only on the first row of each block, and merge the Routes column.
+ * Match reference export format: group rows with the same route URL together
+ * (stable by original row order), keep URL only on the first row of each block,
+ * and return merge ranges for the Routes column.
  */
-function formatRoutesColumnLikeReference(rows, routeCol, rowLegKeys) {
+function formatRoutesColumnLikeReference(rows, routeCol) {
   const header = rows[0];
-  const entries = rows.slice(1).map((row, i) => ({
-    row,
-    i,
-    legKey: rowLegKeys.get(i + 1) || '',
-  }));
+  const indexed = rows.slice(1).map((row, i) => ({ row, i }));
 
-  entries.sort((a, b) => {
+  indexed.sort((a, b) => {
     const urlA = String(a.row[routeCol] || '');
     const urlB = String(b.row[routeCol] || '');
     const hasA = urlA.startsWith('http');
@@ -363,23 +344,22 @@ function formatRoutesColumnLikeReference(rows, routeCol, rowLegKeys) {
     if (!hasA && !hasB) return a.i - b.i;
     if (!hasA) return 1;
     if (!hasB) return -1;
-    if (a.legKey !== b.legKey) return a.legKey.localeCompare(b.legKey);
+    if (urlA !== urlB) return urlA.localeCompare(urlB);
     return a.i - b.i;
   });
 
-  const sorted = [header, ...entries.map(entry => entry.row)];
+  const sorted = [header, ...indexed.map(entry => entry.row)];
   const merges = [];
   let i = 1;
 
   while (i < sorted.length) {
-    const legKey = entries[i - 1].legKey;
-    const url = String(entries[i - 1].row[routeCol] || '');
-    if (!url.startsWith('http') || !legKey) {
+    const url = String(sorted[i][routeCol] || '');
+    if (!url.startsWith('http')) {
       i++;
       continue;
     }
     let j = i + 1;
-    while (j < sorted.length && entries[j - 1].legKey === legKey) j++;
+    while (j < sorted.length && String(sorted[j][routeCol] || '') === url) j++;
     if (j - i > 1) {
       merges.push({ s: { r: i, c: routeCol }, e: { r: j - 1, c: routeCol } });
       for (let k = i + 1; k < j; k++) sorted[k][routeCol] = '';
@@ -401,8 +381,8 @@ function addRouteHyperlinks(ws, rows, routeCol) {
 }
 
 function downloadRoutedExcel(items) {
-  const { rows: routedRows, routeCol, rowLegKeys } = applyRoutesToExcel(items);
-  const { rows, merges } = formatRoutesColumnLikeReference(routedRows, routeCol, rowLegKeys);
+  const { rows: routedRows, routeCol } = applyRoutesToExcel(items);
+  const { rows, merges } = formatRoutesColumnLikeReference(routedRows, routeCol);
   const ws = XLSX.utils.aoa_to_sheet(rows);
   if (merges.length) ws['!merges'] = merges;
   addRouteHyperlinks(ws, rows, routeCol);

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Route Planner</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <div class="container">
+      <div class="card">
+        <h1>Route Planner</h1>
+        <p class="subtitle">Upload any Excel file with location coordinates — routes are generated automatically in your browser.</p>
+        <button type="button" class="btn-link" id="templateBtn">Download blank template</button>
+        <div class="dropzone" id="dropzone">
+          <input type="file" id="fileInput" accept=".xlsx,.xls">
+          <p><strong>Drop Excel file here</strong> or click to browse</p>
+          <p id="fileName" class="hint">No file selected</p>
+        </div>
+        <div class="preview" id="preview"></div>
+        <button type="button" class="btn" id="submitBtn" disabled>Generate Routes</button>
+        <p class="hint center" id="status"></p>
+      </div>
+    </div>
+  </div>
+  <div id="results" class="hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -2,6 +2,7 @@ const OSRM = 'https://router.project-osrm.org';
 const MAX_WAYPOINTS = 23;
 
 let parsed = null;
+let lastResults = null;
 
 const $ = id => document.getElementById(id);
 const dropzone = $('dropzone');
@@ -31,20 +32,28 @@ function num(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function coordsMatch(a, b, eps = 1e-5) {
+  return Math.abs(a.lat - b.lat) < eps && Math.abs(a.lng - b.lng) < eps;
+}
+
 async function loadFile(file) {
   $('fileName').textContent = file.name;
   submitBtn.disabled = true;
   parsed = null;
+  lastResults = null;
   preview.className = 'preview visible';
   preview.textContent = 'Analyzing...';
   statusEl.textContent = '';
   try {
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array' });
-    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const sheetName = wb.SheetNames[0];
+    const sheet = wb.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
     if (rows.length < 2) throw new Error('Excel file has no data rows.');
     parsed = analyzeRows(rows);
+    parsed.fileName = file.name.replace(/\.(xlsx|xls)$/i, '') + '_with_routes.xlsx';
+    parsed.sheetName = sheetName;
     preview.innerHTML = `<strong>Ready:</strong> ${parsed.summary}`;
     preview.classList.remove('error');
     submitBtn.disabled = false;
@@ -55,35 +64,38 @@ async function loadFile(file) {
 }
 
 function analyzeRows(rows) {
-  const headers = rows[0].map(String);
-  const latCol = findCol(headers, ['Latitude', 'Lat', 'LAT']);
-  const lngCol = findCol(headers, ['Longitude', 'Lng', 'Long', 'LNG', 'Lon']);
-  if (latCol < 0 || lngCol < 0) throw new Error('Required columns not found: Latitude and Longitude');
-
-  const nameCol = findCol(headers, ['Name', 'School Name', 'Location Name', 'Destination Name']);
-  const startLatCol = findCol(headers, ['Start LAT', 'Start Lat', 'Start Latitude', 'Origin Lat']);
-  const startLngCol = findCol(headers, ['Start LNG', 'Start Lng', 'Start Longitude', 'Origin Lng']);
-  const districtCol = findCol(headers, ['District', 'Region']);
-  const tehsilCol = findCol(headers, ['Tehsil', 'Tehsil Name', 'Sub District']);
+  const headers = rows[0].map(h => String(h ?? '').trim());
+  const cols = {
+    latCol: findCol(headers, ['Latitude', 'Lat', 'LAT']),
+    lngCol: findCol(headers, ['Longitude', 'Lng', 'Long', 'LNG', 'Lon']),
+    nameCol: findCol(headers, ['Name', 'School Name', 'Location Name', 'Destination Name']),
+    startLatCol: findCol(headers, ['Start LAT', 'Start Lat', 'Start Latitude', 'Origin Lat']),
+    startLngCol: findCol(headers, ['Start LNG', 'Start Lng', 'Start Longitude', 'Origin Lng']),
+    districtCol: findCol(headers, ['District', 'Region']),
+    tehsilCol: findCol(headers, ['Tehsil', 'Tehsil Name', 'Sub District']),
+    routeCol: findCol(headers, ['Route', 'Routes', 'GoogleMapsURL', 'Google Maps URL', 'Google Maps Link']),
+    routeNoCol: findCol(headers, ['RouteNo', 'Route No', 'Route Number']),
+  };
+  if (cols.latCol < 0 || cols.lngCol < 0) throw new Error('Required columns not found: Latitude and Longitude');
 
   const destinations = [];
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
-    const lat = num(row[latCol]);
-    const lng = num(row[lngCol]);
+    const lat = num(row[cols.latCol]);
+    const lng = num(row[cols.lngCol]);
     if (lat == null || lng == null) continue;
     if (lat < -90 || lat > 90 || lng < -180 || lng > 180) continue;
     destinations.push({
-      lat, lng,
-      name: nameCol >= 0 ? String(row[nameCol] || `Stop ${destinations.length + 1}`) : `Stop ${destinations.length + 1}`,
-      district: districtCol >= 0 ? String(row[districtCol] || '').trim() : '',
-      tehsil: tehsilCol >= 0 ? String(row[tehsilCol] || '').trim() : '',
+      lat, lng, rowIndex: r,
+      name: cols.nameCol >= 0 ? String(row[cols.nameCol] || `Stop ${destinations.length + 1}`) : `Stop ${destinations.length + 1}`,
+      district: cols.districtCol >= 0 ? String(row[cols.districtCol] || '').trim() : '',
+      tehsil: cols.tehsilCol >= 0 ? String(row[cols.tehsilCol] || '').trim() : '',
     });
   }
   if (!destinations.length) throw new Error('No valid locations found in Excel.');
 
-  let startLat = startLatCol >= 0 ? num(rows[1][startLatCol]) : null;
-  let startLng = startLngCol >= 0 ? num(rows[1][startLngCol]) : null;
+  let startLat = cols.startLatCol >= 0 ? num(rows[1][cols.startLatCol]) : null;
+  let startLng = cols.startLngCol >= 0 ? num(rows[1][cols.startLngCol]) : null;
   if (startLat == null || startLng == null) {
     startLat = destinations[0].lat;
     startLng = destinations[0].lng;
@@ -98,7 +110,11 @@ function analyzeRows(rows) {
   const summary = `${destinations.length} locations` +
     (batchBy !== 'none' ? ` · batch by ${batchBy}` : ' · single route');
 
-  return { destinations, start: { lat: startLat, lng: startLng, name: 'Start' }, batchBy, districts, tehsils, summary };
+  return {
+    headers, rows, cols, destinations,
+    start: { lat: startLat, lng: startLng, name: 'Start' },
+    batchBy, districts, tehsils, summary,
+  };
 }
 
 function groupDestinations(destinations, batchBy) {
@@ -177,12 +193,12 @@ function splitChunks(start, ordered, maxWp) {
   const chunks = [];
   let cursor = 0;
   let routeNo = 1;
-  let currentStart = start;
+  let currentStart = { ...start, name: start.name || 'Start' };
   while (cursor < ordered.length) {
     const batch = ordered.slice(cursor, cursor + maxDest);
-    const chunkStops = [{ ...currentStart, name: currentStart.name || 'Start' }, ...batch];
-    chunks.push({ routeNo, url: googleUrl(chunkStops) });
-    currentStart = batch[batch.length - 1];
+    const chunkStops = [currentStart, ...batch];
+    chunks.push({ routeNo, url: googleUrl(chunkStops), stops: chunkStops });
+    currentStart = { ...batch[batch.length - 1] };
     cursor += batch.length;
     routeNo++;
   }
@@ -192,14 +208,67 @@ function splitChunks(start, ordered, maxWp) {
 async function planGroup(group, start) {
   const stops = group.stops;
   if (!stops.length) throw new Error('No stops in group');
-  const all = [{ lat: start.lat, lng: start.lng, name: 'Start' }, ...stops];
+  const all = [{ lat: start.lat, lng: start.lng, name: 'Start', rowIndex: null }, ...stops];
   statusEl.textContent = `Optimizing ${group.name} (${stops.length} locations)...`;
   const matrix = await distanceMatrix(all);
   const orderIdx = nearestNeighbor(matrix);
   const ordered = orderIdx.map(i => all[i]);
   const destOrdered = ordered.slice(1);
   const chunks = splitChunks(start, destOrdered, MAX_WAYPOINTS);
-  return { name: group.name, stopCount: stops.length, chunks };
+  return { name: group.name, stopCount: stops.length, stops, chunks, start };
+}
+
+function ensureCol(headers, rows, colIndex, name) {
+  if (colIndex >= 0) return colIndex;
+  const idx = headers.length;
+  headers.push(name);
+  for (let r = 0; r < rows.length; r++) {
+    while (rows[r].length < idx) rows[r].push('');
+    if (r === 0) rows[r][idx] = name;
+    else if (rows[r].length <= idx) rows[r].push('');
+  }
+  return idx;
+}
+
+function setCell(row, col, value) {
+  while (row.length <= col) row.push('');
+  row[col] = value;
+}
+
+/** Assign the same Google Maps URL to every row in the chunk (start + destinations). */
+function applyRoutesToExcel(items) {
+  const headers = [...parsed.headers];
+  const rows = parsed.rows.map(r => [...r]);
+  let routeCol = parsed.cols.routeCol;
+  let routeNoCol = parsed.cols.routeNoCol;
+
+  routeCol = ensureCol(headers, rows, routeCol, 'Route');
+  routeNoCol = ensureCol(headers, rows, routeNoCol, 'RouteNo');
+  rows[0] = headers;
+
+  for (const item of items) {
+    if (item.error) continue;
+    for (const chunk of item.chunks) {
+      for (const stop of chunk.stops) {
+        for (const s of item.stops) {
+          if (coordsMatch(s, stop)) {
+            setCell(rows[s.rowIndex], routeCol, chunk.url);
+            setCell(rows[s.rowIndex], routeNoCol, chunk.routeNo);
+          }
+        }
+      }
+    }
+  }
+
+  return { headers, rows, routeCol, routeNoCol };
+}
+
+function downloadRoutedExcel(items) {
+  const { rows } = applyRoutesToExcel(items);
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, parsed.sheetName || 'Sheet1');
+  XLSX.writeFile(wb, parsed.fileName || 'routes_output.xlsx');
 }
 
 async function generateRoutes() {
@@ -216,6 +285,7 @@ async function generateRoutes() {
       items.push({ name: g.name, stopCount: g.stops.length, chunks: [], error: err.message });
     }
   }
+  lastResults = items;
   showResults(items);
   submitBtn.textContent = 'Generate Routes';
   submitBtn.disabled = false;
@@ -245,12 +315,18 @@ function showResults(items) {
     <div class="header">
       <h1>Excel Routes</h1>
       <p>${ok.length} batches · ${failed.length} failed · ${totalLoc} locations</p>
+      <div class="header-actions">
+        <button type="button" class="btn" id="downloadExcelBtn">Download Excel with Routes</button>
+      </div>
     </div>
     <div class="grid">${cards}</div>`;
   $('backBtn').onclick = () => {
     el.classList.add('hidden');
     el.innerHTML = '';
     $('app').classList.remove('hidden');
+  };
+  $('downloadExcelBtn').onclick = () => {
+    if (lastResults) downloadRoutedExcel(lastResults);
   };
 }
 
@@ -260,8 +336,8 @@ function esc(s) {
 
 function downloadTemplate() {
   const ws = XLSX.utils.aoa_to_sheet([
-    ['Name', 'Latitude', 'Longitude', 'Start LAT', 'Start LNG', 'District', 'Tehsil', 'SchoolCode'],
-    ['Example School', 30.45, 70.90, 31.53, 74.34, 'Sample District', 'Sample Tehsil', 'SCH001'],
+    ['Name', 'Latitude', 'Longitude', 'Start LAT', 'Start LNG', 'District', 'Tehsil', 'SchoolCode', 'Route', 'RouteNo'],
+    ['Example School', 30.45, 70.90, 31.53, 74.34, 'Sample District', 'Sample Tehsil', 'SCH001', '', ''],
   ]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Locations');

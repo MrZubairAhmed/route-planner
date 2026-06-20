@@ -67,11 +67,11 @@ public static class RouteExporter
         var stopToUrl = new Dictionary<Stop, string>();
         foreach (var chunk in planned.Chunks)
         {
-            foreach (var stop in chunk.Stops.Skip(1))
-            {
-                stopToRoute[stop] = chunk.RouteNo;
-                stopToUrl[stop] = chunk.GoogleMapsUrl;
-            }
+        foreach (var stop in chunk.Stops)
+        {
+            stopToRoute[stop] = chunk.RouteNo;
+            stopToUrl[stop] = chunk.GoogleMapsUrl;
+        }
         }
 
         var startRow = new Dictionary<string, object>

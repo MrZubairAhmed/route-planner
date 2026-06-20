@@ -36,8 +36,8 @@ function coordsMatch(a, b, eps = 1e-5) {
   return Math.abs(a.lat - b.lat) < eps && Math.abs(a.lng - b.lng) < eps;
 }
 
-function buildPlaceQuery(name, tehsil, district) {
-  return [name, tehsil, district, 'Pakistan'].filter(Boolean).join(', ');
+function buildPlaceQuery(name, district) {
+  return [name, district, 'Pakistan'].filter(Boolean).join(', ');
 }
 
 async function loadFile(file) {
@@ -111,7 +111,7 @@ function analyzeRows(rows) {
   const batchBy = determineBatchMode(destinations, hasStartingPoint);
   const groupCount = groupDestinations(destinations, batchBy).length;
   const summary = `${destinations.length} locations · ${groupCount} route batch${groupCount === 1 ? '' : 'es'}` +
-    (hasStartingPoint ? ' · starting point per district/tehsil' : batchBy !== 'none' ? ` · batch by ${batchBy}` : ' · single route');
+    (hasStartingPoint ? ' · batch by district and starting point' : batchBy !== 'none' ? ` · batch by ${batchBy}` : ' · single route');
 
   return {
     headers, rows, cols, destinations, hasStartingPoint,
@@ -134,16 +134,16 @@ function groupDestinations(destinations, batchBy) {
     const map = new Map();
     for (const d of destinations) {
       const sp = d.startingPoint || '(No starting point)';
-      const key = `${d.district}\0${d.tehsil}\0${sp}`;
+      const key = `${d.district}\0${sp}`;
       if (!map.has(key)) {
-        map.set(key, { district: d.district, tehsil: d.tehsil, startingPoint: sp, stops: [] });
+        map.set(key, { district: d.district, startingPoint: sp, stops: [] });
       }
       map.get(key).stops.push(d);
     }
     return [...map.values()]
-      .sort((a, b) => `${a.district}${a.tehsil}${a.startingPoint}`.localeCompare(`${b.district}${b.tehsil}${b.startingPoint}`))
+      .sort((a, b) => `${a.district}${a.startingPoint}`.localeCompare(`${b.district}${b.startingPoint}`))
       .map(g => ({
-        name: [g.district, g.tehsil, g.startingPoint !== '(No starting point)' ? g.startingPoint : ''].filter(Boolean).join(' · ') || 'All locations',
+        name: [g.district, g.startingPoint !== '(No starting point)' ? g.startingPoint : ''].filter(Boolean).join(' · ') || 'All locations',
         ...g,
       }));
   }
@@ -163,8 +163,7 @@ function resolveGroupStart(group) {
     return {
       name: group.startingPoint,
       district: group.district,
-      tehsil: group.tehsil,
-      placeQuery: buildPlaceQuery(group.startingPoint, group.tehsil, group.district),
+      placeQuery: buildPlaceQuery(group.startingPoint, group.district),
       lat: null,
       lng: null,
     };

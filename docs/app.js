@@ -290,21 +290,15 @@ function nearestNeighbor(matrix, startIdx = 0) {
 }
 
 function googleUrl(start, destinations) {
-  const fmtLocation = s => {
-    const name = (s && s.name && String(s.name).trim()) || '';
-    if (name) {
-      return encodeURIComponent(`${name} @${s.lat},${s.lng}`);
-    }
-    return encodeURIComponent(`${s.lat},${s.lng}`);
-  };
+  const fmtCoord = s => encodeURIComponent(`${s.lat},${s.lng}`);
   const origin = start.placeQuery
     ? encodeURIComponent(start.placeQuery)
-    : fmtLocation(start);
+    : fmtCoord(start);
   if (!destinations.length) {
     return `https://www.google.com/maps/dir/?api=1&origin=${origin}&travelmode=driving`;
   }
-  const dest = fmtLocation(destinations[destinations.length - 1]);
-  const wps = destinations.slice(0, -1).map(fmtLocation).join('|');
+  const dest = fmtCoord(destinations[destinations.length - 1]);
+  const wps = destinations.slice(0, -1).map(fmtCoord).join('|');
   let url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&travelmode=driving`;
   if (wps) url += `&waypoints=${wps}`;
   return url;
